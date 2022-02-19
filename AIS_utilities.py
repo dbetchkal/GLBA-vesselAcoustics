@@ -106,9 +106,29 @@ def load_MMSI_to_srcID():
     -------
     MMSI_to_srcID: (pd.DataFrame) containing mapping from one vessel identifier to another
     '''
+
+    # all saved references will have the following format
+    potential_files = glob.glob(r"T:\ResMgmt\WAGS\Sound\Experiments & Data\2020 GLBA Acoustic Inventory\MMSI_to_srcID*.csv")
+
+    # split apart to retrieve the date string suffix
+    potential_dates = [os.path.basename(f).split("_")[-1][:-4] for f in potential_files]
+
+    # find the time elapsed between the save suffix and today
+    time_elapsed_since_save = []
+    for pdate in potential_dates:
+        
+        try:
+            file_date = dt.datetime.strptime(pdate, "%Y-%m-%d")
+            time_elapsed_since_save.append(dt.datetime.now() - file_date)
+            
+        except ValueError:
+            time_elapsed_since_save.append(dt.timedelta(days=10000))
+        
+    history = np.array(time_elapsed_since_save)
+
+    most_recent_file = potential_files[np.argwhere(history == history.min())[0][0]]
     
-    MMSI_to_srcID = pd.read_csv(r"T:\ResMgmt\WAGS\Sound\Experiments & Data\2020 GLBA Acoustic Inventory\MMSI_to_srcID.csv",
-                           index_col="MMSI")
+    MMSI_to_srcID = pd.read_csv(most_recent_file, index_col="MMSI")
     
     return MMSI_to_srcID
 
@@ -366,9 +386,44 @@ def load_AIS_from_gdb(gdb_path, mask=None):
     AIS["Datetime"] = AIS["BaseStationTimeUTC"].apply(lambda t: dt.datetime.strptime(t, "%Y-%m-%dT%H:%M:%S+00:00"))
     
     return AIS
-    
 
-def load_AIS_from_csv(csv_path, n=None, column_convention="raw", mask=None):
+
+def AIS_filter_from_acoustic_record(unit, site, year, acoustic_ds, AIS_ds):
+    
+    '''
+    Select only AIS files which overlap the acoustic record.
+    
+    inputs
+    ------
+    unit: (str) 4-letter park unit alpha code (i.e., "GLBA")
+    site: (str) deployment alpha-numeric code (i.e., "002", "HUTCH", etc...)
+    year: (int) 4-digit year (i.e., "2020")
+    
+    returns
+    -------
+    flat_paths: (list) paths for all AIS *.csv files which overlap the acoustic record
+    
+    '''
+    
+    unique_dates = pd.DataFrame(set([(e.year, e.month, e.day) for e in acoustic_ds.nvspl(unit=unit, site=site, year=year)]),
+                                columns=["Year", "Month", "Day"])
+
+    paths = []
+    for _, row in unique_dates.iterrows():
+        
+        # find the unique unit+year+month+day AIS file, if any exists
+        paths.append([e.path for e in AIS_ds.AIS(unit=unit,
+                                                 year=int(row.Year), 
+                                                 month=int(row.Month), 
+                                                 day=int(row.Day))])
+
+    # because some days have multiple AIS files, list lengths are ≥1
+    flat_paths = [item for sublist in paths for item in sublist]
+
+    return flat_paths
+
+
+def load_AIS_from_csv(csv_path, n=None, column_convention="raw", mask=None, iyore_subset=None):
     
     '''
     Parsing function for raw AIS data from the Alaska Marine Exchange (*.csv)
@@ -379,6 +434,7 @@ def load_AIS_from_csv(csv_path, n=None, column_convention="raw", mask=None):
     n: (int) or default None; the number of .csv files to load
     column_convention: (str) default "raw", but also accepts "GLBA" to use park convention
     mask: (gpd.GeoDataFrame) optional default None; polygonal mask to spatially filter the raw dataset
+    iyore_subset: (list) optional default None; subset list of *.csv files
     
     Returns
     -------
@@ -387,23 +443,34 @@ def load_AIS_from_csv(csv_path, n=None, column_convention="raw", mask=None):
     
     import os
     import glob
-
-    # load in all the raw CSV files
-    raws = glob.glob(csv_path + os.sep + "*.csv")
+        
+    if iyore_subset is not None:
+        raws = iyore_subset
+    else:
+        # load in all the raw CSV files
+        raws = glob.glob(csv_path + os.sep + "*.csv")
 
     if n is not None:
         raws = raws[:n]
+
+    print("\t\t"+str(len(raws))+" .csv files will be processed...")
     
     # glean the date that each file represents (necessary?)
     dates = [dt.datetime.strptime(r.split("-")[-2], "%Y%m%d") for r in raws]
 
+    print("\t\tDates have been stripped from the files...")
+
     # concatenate all the CSV files together into one `pandas` dataframe
     AIS_df = pd.concat([pd.read_csv(r, low_memory=False) for r in raws])
     
+    print("\t\tFiles have been concatenated into a `pd.DataFrame` object...")
+
     # there's a pile of 1090 MHz jet ADS-B points in this dataset, too
     # DROP THEM!
     AIS_df = AIS_df.loc[pd.notna(AIS_df['Ship name']), :]
-                       
+    
+    print("\t\t1090 MHz ADS-B data have been dropped...")
+
     if column_convention == "GLBA":
         
         # a nice AIS column-name convention from Whitney Rapp
@@ -425,14 +492,23 @@ def load_AIS_from_csv(csv_path, n=None, column_convention="raw", mask=None):
         # columns "as is", but we'll still set up the geometry
         geo = gpd.points_from_xy(AIS_df.Longitude, AIS_df.Latitude)
         
-        # add a new column containing a Python datetime
-        AIS_df["Datetime"] = AIS_df['Base station time stamp'].apply(lambda t: dt.datetime.strptime(t, '%d %b %Y %H:%M:%S UTC'))
-    
+        try:
+            # add a new column containing a Python datetime
+            AIS_df["Datetime"] = AIS_df['Base station time stamp'].apply(lambda t: dt.datetime.strptime(t, '%d %b %Y %H:%M:%S UTC'))
+        
+        except ValueError:
+
+            # add a new column containing a Python datetime
+            AIS_df["Datetime"] = AIS_df['Base station time stamp'].apply(lambda t: dt.datetime.strptime(t, '%Y-%m-%d %H:%M:%S UTC'))
+
+
     # then use the 'Latitude' and 'Longitude' columns to convert into a geopandas `GeoDataFrame` object
     AIS = gpd.GeoDataFrame(AIS_df, geometry=geo, crs='EPSG:4326')
     
     # this is necessary before clipping
     AIS.reset_index(inplace=True)
+
+    print("\t\tRaw `gpd.GeoDataFrame` object has been created...")
     
     # spatially filter using mask if provided
     if mask is not None:
@@ -444,6 +520,7 @@ def load_AIS_from_csv(csv_path, n=None, column_convention="raw", mask=None):
         
         pass
     
+    print("\t\tFinished creating GeoDataFrame!")
     return AIS
 
 
