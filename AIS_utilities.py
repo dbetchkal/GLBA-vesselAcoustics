@@ -67,7 +67,7 @@ def prepend(path, text):
         f.seek(0)
         f.write(text + body)
         
-def point_buffer(lat, lon, km):
+def point_buffer(lat, lon, km, return_equal_area=False):
     
     '''
     A generic circular buffer (with a given radius, `km`), around a coordinate.
@@ -86,9 +86,12 @@ def point_buffer(lat, lon, km):
     # to make a polygon: buffer point using a radius in meters
     buf_m = Point(long_m, lat_m).buffer(km * 1000)  # distance in meters
 
-    # convert polygon from aeqd back into wgs84
-    AEQD_to_WGS84 = pyproj.Transformer.from_crs(aeqd, wgs84)
-    buf = transform(AEQD_to_WGS84.transform, buf_m) # apply projection
+    if return_equal_area:
+        buf = buf_m
+    else:
+        # convert polygon from aeqd back into wgs84
+        AEQD_to_WGS84 = pyproj.Transformer.from_crs(aeqd, wgs84)
+        buf = transform(AEQD_to_WGS84.transform, buf_m) # apply projection
     
     # somehow lat and long are incorrectly transposed... fix that
     buf = Polygon(np.flip(np.array(buf.exterior.xy), axis=0).T)
