@@ -470,7 +470,7 @@ def load_AIS_from_csv(csv_path, n=None, column_convention="raw", mask=None, iyor
 
     # there's a pile of 1090 MHz jet ADS-B points in this dataset, too
     # DROP THEM!
-    AIS_df = AIS_df.loc[pd.notna(AIS_df['Ship name']), :]
+    AIS_df = AIS_df.loc[pd.notna(AIS_df['MMSI']), :]
     
     print("\t\t1090 MHz ADS-B data have been dropped...")
 
@@ -655,7 +655,14 @@ def presence_bounds_to_SRCID_bounds(SRCID_row_list, srcID, enter, exit):
 
     for k, hr in enumerate(hrs):
 
-        if(k == 0): # starting case
+        if((k == 0)&(len(hrs)==1)): # starting case for events completely contained within an hour
+
+            start_secs = (enter.minute*60 + enter.second)
+            len_secs = (exit.minute*60 + exit.second) - (enter.minute*60 + enter.second)
+            out_date = dt.datetime.strftime(hr.date(), "%Y-%m-%d")
+            SRCID_row_list.append(SPLAT_row_dictionary(out_date, hr.hour, start_secs, len_secs, srcID))
+
+        elif((k == 0)&(len(hrs)>1)): # starting case for multi-hour events
 
             start_secs = (enter.minute*60 + enter.second)
             len_secs = 3600 - start_secs
