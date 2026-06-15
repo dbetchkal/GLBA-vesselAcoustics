@@ -164,7 +164,7 @@ def create_circular_site_buffer(ds, unit, site, year, search_within_km = 20):
     '''
     
     # load the metadata sheet
-    metadata = pd.read_csv(r"V:\Complete_Metadata_AKR_2001-2021.txt", delimiter="\t", encoding = "ISO-8859-1")
+    metadata = pd.read_csv(r"T:\ResMgmt\Sound\V-Drive_Transfers\Site Metadata\Complete_Metadata_AKR_2001-2025.txt", delimiter="\t", encoding = "ISO-8859-1")
 
     # look up the site's coordinates in WGS84
     lat_in, long_in = metadata.loc[(metadata["code"] == site)&(metadata["year"] == year), "lat":"long"].values[0]
